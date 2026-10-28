@@ -1,0 +1,3 @@
+SPR spr_1c spr_2c spr_2a spr_slv
+SCL scl_func scl_fu01 scl_fu02 scl_fu03 scl_fu04 scl_fu05 scl_ro00 scl_ro01 scl_ro02 scl_ro03 scl_ro04 scl_ro05 scl_ro10 scl_pri scl_pr01 scl_pr02 scl_pr03 scl_pr04 scl_pr05 scl_pr06 scl_pr07 scl_pr08 scl_pr09 scl_pr10 scl_pr11 scl_pr12 scl_pr13 scl_pr14 scl_win0 scl_win1 scl_win2 scl_win3 scl_mosa scl_lncl scl_back scl_vblv
+MTH mth_fixd mth_tri

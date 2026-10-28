@@ -1,0 +1,4 @@
+build/
+__pycache__/
+.ninja_deps
+.ninja_log

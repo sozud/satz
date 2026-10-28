@@ -1,0 +1,110 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  sample:
+    name: cube_scroll (${{ matrix.name }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: mednafen
+            flags: ''
+            frames: true
+          - name: sanitizers
+            flags: --sanitize
+            frames: true
+          - name: no mednafen
+            flags: --video none --sound hle
+            frames: false
+          - name: window
+            flags: --window
+            run: --window
+            frames: true
+    steps:
+      - name: Clone
+        uses: actions/checkout@v7
+        with:
+          submodules: true
+          persist-credentials: false
+      - name: Install requirements
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes build-essential ninja-build clang-18 libsdl2-dev
+      - name: Build
+        run: python3 satz.py samples --output build/samples ${{ matrix.flags }}
+      - name: Run
+        env:
+          ASAN_OPTIONS: detect_stack_use_after_return=0
+          UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
+          SDL_VIDEODRIVER: dummy
+          SDL_AUDIODRIVER: dummy
+        run: |
+          mkdir -p build/run
+          build/samples/cube_scroll/cube_scroll --output build/run --frames 600 --snap-every 60 ${{ matrix.run }}
+      - name: Check frames
+        if: matrix.frames
+        working-directory: build/run
+        run: sha256sum -c ../../samples/cube_scroll/frames.sha256
+      - name: Upload frames
+        if: failure() && matrix.frames
+        uses: actions/upload-artifact@v7
+        with:
+          name: cube_scroll-${{ matrix.name }}
+          path: build/run
+
+  sample-macos:
+    name: cube_scroll macOS (${{ matrix.name }})
+    runs-on: macos-15
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: mednafen
+            flags: ''
+            frames: true
+          - name: no mednafen
+            flags: --video none --sound hle
+            frames: false
+          - name: window
+            flags: --window
+            run: --window
+            frames: true
+    env:
+      SATZ_CC: clang
+      SATZ_CXX: clang++
+      SATZ_GCC: gcc-14
+    steps:
+      - name: Clone
+        uses: actions/checkout@v7
+        with:
+          submodules: true
+          persist-credentials: false
+      - name: Install requirements
+        run: brew install ninja gcc@14 sdl2
+      - name: Build
+        run: python3 satz.py samples --output build/samples ${{ matrix.flags }}
+      - name: Run
+        env:
+          SDL_VIDEODRIVER: dummy
+          SDL_AUDIODRIVER: dummy
+        run: |
+          mkdir -p build/run
+          build/samples/cube_scroll/cube_scroll --output build/run --frames 600 --snap-every 60 ${{ matrix.run }}
+      - name: Check frames
+        if: matrix.frames
+        working-directory: build/run
+        run: shasum -a 256 -c ../../samples/cube_scroll/frames.sha256
+      - name: Upload frames
+        if: failure() && matrix.frames
+        uses: actions/upload-artifact@v7
+        with:
+          name: cube_scroll-macos-${{ matrix.name }}
+          path: build/run
