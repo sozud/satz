@@ -102,6 +102,9 @@ unsigned long satz_bus_address(const volatile void* pointer)
         return (unsigned long)((uintptr_t)p & 0xFFFFFFFFu);
     if ((uintptr_t)p < BIOS_SIZE)
         return (unsigned long)(uintptr_t)p;
+    if ((uintptr_t)p <= 0xFFFFFFFFu && satz_phys((uint32_t)(uintptr_t)p) - BBUS_BASE < BBUS_SIZE &&
+        !((const uint8_t*)p >= (const uint8_t*)__executable_start && (const uint8_t*)p < (const uint8_t*)end))
+        return (unsigned long)(uintptr_t)p;
     for (unsigned i = 0; i < satz_ram_area_count; ++i)
         if (p >= satz_ram_areas[i].data && p < satz_ram_areas[i].data + satz_ram_areas[i].size)
             return satz_ram_areas[i].start + (unsigned long)(p - satz_ram_areas[i].data);

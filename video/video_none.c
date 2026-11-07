@@ -69,12 +69,8 @@ uint16_t satz_video_vdp1_read(uint32_t offset)
 
 extern uint64_t satz_now(void);
 
-void satz_video_vdp1_write(uint32_t offset, uint16_t value)
+static void start_draw(void)
 {
-    vdp1_regs[(offset >> 1) & 0xF] = value;
-    if (offset != 0x04 || !(value & 3))
-        return;
-    edsr = (uint16_t)((edsr & 2) ? 1 : 0);
     uint32_t command = 0, cycles = 200;
     for (int i = 0; i < 0x4000; ++i) {
         uint16_t control = vdp1_vram[command * 16];
@@ -90,11 +86,29 @@ void satz_video_vdp1_write(uint32_t offset, uint16_t value)
     end_at = satz_now() + cycles;
 }
 
+static void frame_change(void)
+{
+    edsr = (uint16_t)((edsr & 2) ? 1 : 0);
+    if ((vdp1_regs[2] & 3) == 2)
+        start_draw();
+}
+
+void satz_video_vdp1_write(uint32_t offset, uint16_t value)
+{
+    vdp1_regs[(offset >> 1) & 0xF] = value;
+    if (offset == 0x04 && (value & 3) == 1) {
+        edsr = (uint16_t)((edsr & 2) ? 1 : 0);
+        start_draw();
+    } else if (offset == 0x02 && (value & 3) == 3) {
+        frame_change();
+    }
+}
+
 void satz_video_vblank(uint64_t cycles, int in_vblank)
 {
     (void)cycles;
-    if (in_vblank && (vdp1_regs[1] & 3) == 3)
-        edsr = (uint16_t)((edsr & 2) ? 1 : 0);
+    if (in_vblank && !(vdp1_regs[1] & 2))
+        frame_change();
 }
 
 int satz_video_render(uint32_t* pixels, int* width, int* height)

@@ -3,11 +3,11 @@
 void sprMemCpyL(void* dst, void* src, int count)
 {
     if (count > 0)
-        satz_bus_store((unsigned int)satz_bus_address(dst), src, (unsigned long)count * 4);
+        satz_bus_write16s(satz_bus_address(dst), src, (unsigned long)count * 2);
 }
 
 void sprMemCpyW(void* dst, void* src, int count)
 {
     if (count > 0)
-        satz_bus_store((unsigned int)satz_bus_address(dst), src, (unsigned long)count * 2);
+        satz_bus_write16s(satz_bus_address(dst), src, (unsigned long)count);
 }

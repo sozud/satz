@@ -5,9 +5,12 @@
 #include "vdp2_render.h"
 #include "satz_video.h"
 #include "../host/satz_words.h"
+#include <cstdlib>
+#include <cstdio>
 
 extern "C" void satz_raise_scu(int vector);
 extern "C" uint64_t satz_now(void);
+extern "C" void satz_video_advance(uint64_t cycles);
 
 using namespace Mednafen;
 
@@ -58,6 +61,7 @@ using namespace MDFN_IEN_SS;
 static uint64_t base;
 static bool vblank;
 static uint16 vram2[0x40000], cram2[0x800], regs2[0x100];
+static uint16 shown_vram2[0x40000], shown_cram2[0x800], shown_regs2[0x100];
 static int32 lines[512];
 static uint16 vdp1_lines[256][352];
 static bool vdp1_hires8[256];
@@ -83,6 +87,7 @@ extern "C" uint32_t satz_video_read(uint32_t phys, int size)
 {
  if(phys - 0x05C00000u < 0x100000u)
  {
+  satz_video_advance(satz_now());
   const uint32 a = phys & 0xFFFFFu;
   if(size == 4)
    return ((uint32)VDP1::Read16_DB(a) << 16) | VDP1::Read16_DB(a + 2);
@@ -98,6 +103,7 @@ extern "C" void satz_video_write(uint32_t phys, uint32_t value, int size)
 {
  if(phys - 0x05C00000u < 0x100000u)
  {
+  satz_video_advance(satz_now());
   const uint32 a = phys & 0xFFFFFu;
   if(size == 4)
   {
@@ -165,6 +171,12 @@ extern "C" uint64_t satz_video_next_event(void)
  return base + (uint64_t)(int64)events[SS_EVENT_VDP1].event_time;
 }
 
+static void finish_drawing(void)
+{
+ for(int i = 0; i < 1 << 20 && VDP1::IsDrawing() && events[SS_EVENT_VDP1].event_time != SS_EVENT_DISABLED_TS; i++)
+  events[SS_EVENT_VDP1].event_time = VDP1::Update(events[SS_EVENT_VDP1].event_time);
+}
+
 extern "C" uint16_t satz_video_vdp1_read(uint32_t offset)
 {
  satz_video_advance(satz_now());
@@ -175,17 +187,44 @@ extern "C" void satz_video_vdp1_write(uint32_t offset, uint16_t value)
 {
  satz_video_advance(satz_now());
  VDP1::Write16_DB(0x100000 | (offset & 0x1E), value);
+ if((offset & 0x1E) == 0x02)
+ {
+  const int32 ts = stamp(satz_now());
+  VDP1::SetHBVB(ts, true, vblank);
+  VDP1::SetHBVB(ts, false, vblank);
+ }
+ finish_drawing();
 }
 
 extern "C" void satz_video_vblank(uint64_t cycles, int in_vblank)
 {
  int32 ts = stamp(cycles);
  satz_video_advance(cycles);
+ static int trace = -1;
+ if(trace < 0)
+  trace = getenv("SATZ_TRACE_VDP1") != NULL;
+ if(trace && in_vblank)
+  fprintf(stderr, "vdp1 vblank EDSR=%04X LOPR=%04X COPR=%04X\n", VDP1::Read16_DB(0x100010), VDP1::Read16_DB(0x100012),
+          VDP1::Read16_DB(0x100014));
  if(in_vblank && !vblank)
   for(uint32 line = 0; line < 256; line++)
    read_vdp1_line(line);
+ if(in_vblank && !vblank)
+  if(const char* dump = getenv("SATZ_DUMP_VDP1_LINES"))
+   if(FILE* f = fopen(dump, "wb"))
+   {
+    fwrite(vdp1_lines, 1, sizeof(vdp1_lines), f);
+    fclose(f);
+   }
+ if(!in_vblank && vblank)
+ {
+  memcpy(shown_vram2, vram2, sizeof(vram2));
+  memcpy(shown_cram2, cram2, sizeof(cram2));
+  memcpy(shown_regs2, regs2, sizeof(regs2));
+ }
  vblank = in_vblank != 0;
  VDP1::SetHBVB(ts, false, vblank);
+ finish_drawing();
 }
 
 extern "C" void satz_video_hblank(uint64_t cycles)
@@ -194,13 +233,14 @@ extern "C" void satz_video_hblank(uint64_t cycles)
  satz_video_advance(cycles);
  VDP1::SetHBVB(ts, true, vblank);
  VDP1::SetHBVB(ts, false, vblank);
+ finish_drawing();
 }
 
 extern "C" int satz_video_render(uint32_t* pixels, int* width, int* height)
 {
- VDP2REND_SatzSync(regs2, cram2, vram2);
+ VDP2REND_SatzSync(shown_regs2, shown_cram2, shown_vram2);
 
- const uint16 tvmd = regs2[0];
+ const uint16 tvmd = shown_regs2[0];
  const unsigned hres = tvmd & 7;
  const unsigned vres = (tvmd >> 4) & 3;
  const unsigned active = vres == 0 ? 224 : (vres == 1 ? 240 : 256);
@@ -224,7 +264,7 @@ extern "C" int satz_video_render(uint32_t* pixels, int* width, int* height)
   VDP2Rend_LIB* lib = VDP2REND_GetLIB(line);
   for(unsigned w = 0; w < 2; w++)
   {
-   const uint16 sy = regs2[(0xC2 >> 1) + w * 4] & 0x1FF, ey = regs2[(0xC6 >> 1) + w * 4] & 0x1FF;
+   const uint16 sy = shown_regs2[(0xC2 >> 1) + w * 4] & 0x1FF, ey = shown_regs2[(0xC6 >> 1) + w * 4] & 0x1FF;
    lib->win_ymet[w] = line >= sy && line <= ey;
   }
   memset(lib->rv, 0, sizeof(lib->rv));

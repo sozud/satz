@@ -12,6 +12,12 @@ static size_t running_size;
 
 static void running_on_main_stack(void)
 {
+#ifdef __APPLE__
+    if (running_stack)
+        return;
+    running_size = pthread_get_stacksize_np(pthread_self());
+    running_stack = (const char*)pthread_get_stackaddr_np(pthread_self()) - running_size;
+#else
     pthread_attr_t attr;
     void* bottom;
     size_t size;
@@ -21,6 +27,7 @@ static void running_on_main_stack(void)
     pthread_attr_destroy(&attr);
     running_stack = bottom;
     running_size = size;
+#endif
 }
 #endif
 #endif

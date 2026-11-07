@@ -14,7 +14,16 @@ CC = os.environ.get('SATZ_CC', 'clang-18')
 CXX = os.environ.get('SATZ_CXX', 'clang++-18')
 MEDNAFEN_CXX = os.environ.get('SATZ_MEDNAFEN_CXX', 'g++')
 MEDNAFEN_CC = os.environ.get('SATZ_MEDNAFEN_CC', 'gcc')
-M68K_CXX = os.environ.get('SATZ_M68K_CXX', MEDNAFEN_CXX)
+M68K_CXX = os.environ.get('SATZ_M68K_CXX', 'g++-14' if sys.platform == 'darwin' else MEDNAFEN_CXX)
+
+
+def require_real_gcc(compiler):
+    try:
+        version = subprocess.run([compiler, '--version'], check=True, capture_output=True, text=True).stdout
+    except (OSError, subprocess.CalledProcessError) as error:
+        sys.exit(f'satz: the 68K core needs GCC, and {compiler} did not run ({error}); set SATZ_M68K_CXX')
+    if 'clang' in version.lower():
+        sys.exit(f'satz: {compiler} is clang, which takes many minutes on the 68K core; set SATZ_M68K_CXX to a real g++')
 COMMON = ['-O2', '-gline-tables-only', '-fno-strict-aliasing', '-fwrapv', '-fno-common', '-funwind-tables',
           '-ffunction-sections', '-fdata-sections', '-Wno-everything', '-Werror=pointer-to-int-cast',
           '-Werror=int-to-pointer-cast', '-Werror=int-conversion',
@@ -78,26 +87,27 @@ SDK_PORTS = {
         ('GFS_LOCAL void gftr_copyFrac(Sint32 n, Uint32 *dp, Uint32 *sp)\n', 'GFS_LOCAL void gftr_copyFrac(Sint32 n, Uint32 *dp, volatile Uint32 *sp)\n'),
     ],
 }
-BIG_ENDIAN = '\n#pragma scalar_storage_order big-endian\n'
-NATIVE_ORDER = '\n#pragma scalar_storage_order default\n'
 SBL_SYS_CALLS = [(f'\\(\\*\\*\\([^\\n]*?\\)0x{address:X}\\)', function) for address, function in (
-    (0x6000300, 'satz_scu_vector_set'), (0x6000304, 'satz_scu_vector_get'), (0x6000310, 'satz_scu_vector_set'),
+    (0x6000300, 'satz_scu_vector_set'), (0x6000304, 'satz_scu_vector_get'), (0x6000310, 'satz_bios_set_slave_vector'),
     (0x6000314, 'satz_scu_vector_get'), (0x6000320, 'satz_bios_change_clock'), (0x6000330, 'satz_bios_test_and_set'),
-    (0x6000334, 'satz_bios_clear_semaphore'), (0x6000340, 'satz_set_scu_mask'), (0x6000344, 'satz_bios_change_scu_mask'))]
+    (0x6000334, 'satz_bios_clear_semaphore'), (0x6000340, 'satz_set_scu_mask'), (0x6000344, 'satz_bios_change_scu_mask'),
+    (0x600026C, 'satz_bios_execdmp'))]
 SBL_PORTS = {
     'sega_sys.h': [('@re', p) for p in SBL_SYS_CALLS] + [
         ('@re', (r'\(\*\(volatile Uint32\s*\*\)0x6000348\)', '(satz_scu_mask())')),
         ('@re', (r'\(\*\(volatile Uint32\s*\*\)0x6000324\)', '(0)')),
         ('@re', (r'\(\(\*\*\([^\n]*?\)0x6000280\)\(_IprTab_\)\)', '((void)(_IprTab_))')),
+        ('@re', (r'\(\*\(volatile Uint8\s*\*\)0x6000210\)', '((Uint8)satz_bus_read(0x6000210, 1))')),
     ],
-    'sega_def.h': [
-        ('@before', ('typedef struct  XyInt {', BIG_ENDIAN.lstrip('\n'))),
-        ('@after', ('} XyInt;', NATIVE_ORDER.rstrip('\n'))),
+    'sega_per.h': [
+        ('@re', (r'(?s)^#if 0\n    [^\n]*DISK Version 1994-11-11.*?^#endif\n', '')),
+        ('@re', (r'^#define PER_PokeByte\(address,data\)\s+\(\*\(volatile Uint8 \*\)\(address\) = \(Uint8\)\(data\)\)',
+                 '#define PER_PokeByte(address,data)  satz_bus_write((unsigned long)(address), (Uint8)(data), 1)')),
+        ('@re', (r'^#define PER_PeekByte\(address\)\s+\(\*\(volatile Uint8 \*\)\(address\)\)',
+                 '#define PER_PeekByte(address)   ((Uint8)satz_bus_read((unsigned long)(address), 1))')),
     ],
     'sega_spr.h': [
         ('#define  USE_SLAVE', ''),
-        ('@before', ('struct SprSpCmd {', BIG_ENDIAN.lstrip('\n'))),
-        ('@before', ('typedef struct SprSpCmd     SprSpCmd;', NATIVE_ORDER.lstrip('\n'))),
         ('#define SPR_WRITE_REG(reg, val) \\\n      *(volatile Uint16*)(VDP1_REG_BASE+(reg)) = (val)',
          '#define SPR_WRITE_REG(reg, val) satz_bus_write(VDP1_REG_BASE+(reg), (val), 2)'),
         ('#define SPR_READ_REG(reg) \\\n      (*(volatile Uint16*)(VDP1_REG_BASE+(reg)))',
@@ -107,17 +117,25 @@ SBL_PORTS = {
         ('#define SPR_SCLREAD_REG(reg) \\\n      (*(volatile Uint16*)(VDP2_REG_BASE+(reg)))',
          '#define SPR_SCLREAD_REG(reg) ((Uint16)satz_bus_read(VDP2_REG_BASE+(reg), 2))'),
     ],
-    'sega_scl.h': [
-        ('@after', ('#include <sega_mth.h> ', BIG_ENDIAN.rstrip('\n'))),
-        ('@before', ('#ifndef __PRI_GLVAR', BIG_ENDIAN.lstrip('\n'))),
-        ('@end', NATIVE_ORDER.lstrip('\n')),
-    ],
     'spr_1c': [
+        ('static Uint16  EraseLeftX  = 0;', 'Uint16  EraseLeftX  = 0;'),
+        ('static Uint16  EraseTopY   = 0;', 'Uint16  EraseTopY   = 0;'),
+        ('static Uint16  EraseRightX = 0;', 'Uint16  EraseRightX = 0;'),
+        ('static Uint16  EraseBotY   = 0;', 'Uint16  EraseBotY   = 0;'),
         ('    *VRAM     = (Uint8*)VRAM_ADDR;\n\n    *(*VRAM)     = 0x80;                 /* set END command to VRAM top area */\n    *((*VRAM)+1) = 0x00;',
          '    *VRAM     = (Uint8*)satz_bus_pointer(VRAM_ADDR);\n\n    satz_bus_write(VRAM_ADDR, 0x80, 1);\n    satz_bus_write(VRAM_ADDR + 1, 0x00, 1);'),
     ],
     'spr_2c': [
-        ('@all:&spCmd->ax, xy,', '(Uint8*)spCmd + 12, xy,'),
+        ('\t\tspCmd->ax = 0;\n\t\tspCmd->ax = 0;\n\t\tspCmd->bx = SpScreenX-1;\n\t\tspCmd->bx = 0;\n'
+         '\t\tspCmd->cx = SpScreenX-1;\n\t\tspCmd->cx = SpScreenY-1;\n\t\tspCmd->dx = 0;\n\t\tspCmd->dx = SpScreenY-1;',
+         '\t\tspCmd->ax = EraseLeftX;\n\t\tspCmd->ay = EraseTopY;\n\t\tspCmd->bx = EraseRightX;\n\t\tspCmd->by = EraseTopY;\n'
+         '\t\tspCmd->cx = EraseRightX;\n\t\tspCmd->cy = EraseBotY;\n\t\tspCmd->dx = EraseLeftX;\n\t\tspCmd->dy = EraseBotY;'),
+        ('@before', ('Sint32         SpGourTblMax;', 'extern Uint16 EraseLeftX, EraseTopY, EraseRightX, EraseBotY;\n')),
+        ('@all:&spCmd->ax, xy,', '(Uint8*)spCmd + __builtin_offsetof(SprSpCmd, ax), xy,'),
+        ('            DMA_ScuMemCopy(spCmd, SpMstCmd, sizeof(SprSpCmd)*SpMstCmdPos);',
+         '            satz_bus_write16s(satz_bus_address(spCmd), SpMstCmd, sizeof(SprSpCmd) / 2 * SpMstCmdPos);'),
+        ('            DMA_ScuMemCopy(spCmd, SpSlvCmd, sizeof(SprSpCmd)*SpSlvCmdPos);',
+         '            satz_bus_write16s(satz_bus_address(spCmd), SpSlvCmd, sizeof(SprSpCmd) / 2 * SpSlvCmdPos);'),
         ('    struct NullBlock *next;                 /* Next Null Block Pointer       */', '    Uint32            next;'),
         ('@all:(NullBlock*)((Uint32)', '(NullBlock*)((unsigned long)'),
         ('@re', (r'\b(nullBlock|minNullBlock|befMinNullBlock|memblk|prev|second_best|nullBlockTop|blockTop|pt1|pt2)->next\s*=(?!=)\s*([^;]+);', r'SATZ_FIELD_SET(\1, NullBlock, next, satz_bus_address(\2));')),
@@ -129,6 +147,12 @@ SBL_PORTS = {
         ('@re', (r'\b(nullBlock|minNullBlock|befMinNullBlock|memblk|prev|second_best|nullBlockTop|blockTop|pt1|pt2)->(\w+)\s*\-=\s*([^;]+);', r'SATZ_FIELD_SET(\1, NullBlock, \2, SATZ_FIELD_GET(\1, NullBlock, \2) - (\3));')),
         ('@re', (r'\b(nullBlock|minNullBlock|befMinNullBlock|memblk|prev|second_best|nullBlockTop|blockTop|pt1|pt2)->(\w+)\s*=(?!=)\s*([^;]+);', r'SATZ_FIELD_SET(\1, NullBlock, \2, \3);')),
         ('@re', (r'\b(nullBlock|minNullBlock|befMinNullBlock|memblk|prev|second_best|nullBlockTop|blockTop|pt1|pt2)->(\w+)', r'SATZ_FIELD_GET(\1, NullBlock, \2)')),
+        ('    DMA_ScuMemCopy(dLookupTbl, lookupTbl, sizeof(SprLookupTbl));',
+         '    for (Uint32 i = 0; i < sizeof(SprLookupTbl) / 2; i++)\n'
+         '        satz_bus_write((unsigned long)dLookupTbl + i * 2, ((const Uint16*)lookupTbl)[i], 2);'),
+        ('        DMA_ScuMemCopy(crGourTbl, SpGourTbl, sizeof(SprGourTbl)*SpGourTblMax);',
+         '        for (Uint32 i = 0; i < sizeof(SprGourTbl) * SpGourTblMax / 2; i++)\n'
+         '            satz_bus_write((unsigned long)crGourTbl + i * 2, ((const Uint16*)SpGourTbl)[i], 2);'),
         ('#if 0\n\n/*****************************************************************************\n *\n * NAME:  flushDrawPrtyBlock()',
          '#if 1\n\n/*****************************************************************************\n *\n * NAME:  flushDrawPrtyBlock()'),
     ],
@@ -136,35 +160,30 @@ SBL_PORTS = {
         ('@re', (r'^\tregaddr\[(\d)\] = (Scl_s_reg\.\w+);', r'\tsatz_bus_write((unsigned long)&regaddr[\1], \2, 2);')),
         ('\t\tfor (tcr = 0;tcr < tsize;tcr++){\n\t\t\t*((Uint16 *)dest) = *((Uint16 *)src);\n\t\t\tdest = (Uint8 *)dest + 2;\n'
          '\t\t\tsrc = (Uint8 *)src + 2;\n\t\t}',
-         '\t\tsatz_bus_store((unsigned long)dest, src, tsize * 2);'),
-        ('@all:&Scl_s_reg.ramcontrl ,', '(Uint8 *)&Scl_s_reg + __builtin_offsetof(SclSysreg, ramcontrl) ,'),
+         '\t\tsatz_bus_write16s((unsigned long)dest, src, tsize);'),
+        ('@before', ('void SCL_CopyReg()\n',
+                     '#define SATZ_WIDE(type, from, to) satz_wide_fields(__builtin_offsetof(type, from), __builtin_offsetof(type, to))\n'
+                     '#define SATZ_WIDE_END(type, from) satz_wide_fields(__builtin_offsetof(type, from), sizeof(type))\n\n')),
+        ('@all:SCL_Memcpyw(p', 'satz_bus_write_struct((unsigned long)p'),
+        ('@all:,&SclRotregBuff[0],size);', ',&SclRotregBuff[0],size,\n\t\t\tSATZ_WIDE(SclRotreg, screenst, viewp) | SATZ_WIDE_END(SclRotreg, move));'),
+        ('@all:,&SclRotregBuff[1],size);', ',&SclRotregBuff[1],size,\n\t\t\tSATZ_WIDE(SclRotreg, screenst, viewp) | SATZ_WIDE_END(SclRotreg, move));'),
+        ('    SCL_Memcpyw(&regaddr[i], &Scl_n_reg, sizeof(SclNorscl));',
+         '    satz_bus_write_struct((unsigned long)&regaddr[i], &Scl_n_reg, sizeof(SclNorscl),\n'
+         '                          SATZ_WIDE(SclNorscl, n0_move_x, n2_move_x) | SATZ_WIDE_END(SclNorscl, celladdr));'),
+        ('    SCL_Memcpyw(&regaddr[i], &Scl_r_reg, sizeof(SclRotscl));',
+         '    satz_bus_write_struct((unsigned long)&regaddr[i], &Scl_r_reg, sizeof(SclRotscl), SATZ_WIDE_END(SclRotscl, paramaddr));'),
+        ('    SCL_Memcpyw(&regaddr[i], &Scl_w_reg, sizeof(SclWinscl));',
+         '    satz_bus_write_struct((unsigned long)&regaddr[i], &Scl_w_reg, sizeof(SclWinscl), SATZ_WIDE_END(SclWinscl, linewin0_addr));'),
+        ('\t\tSCL_Memcpyw((void *)SclAddrLsTbl[0],(void *)SclAddrLsTbl[1]\n\t\t\t, SclLengthLsTbl * 4);',
+         '\t\tsatz_bus_write32s(SclAddrLsTbl[0], (const void *)(unsigned long)SclAddrLsTbl[1], SclLengthLsTbl);'),
+        ('\t\tSCL_Memcpyw((void *)SclAddrCsTbl[0],(void *)SclAddrCsTbl[1]\n\t\t\t, SclLengthCsTbl * 4);',
+         '\t\tsatz_bus_write32s(SclAddrCsTbl[0], (const void *)(unsigned long)SclAddrCsTbl[1], SclLengthCsTbl);'),
     ],
-    'scl_fu03': [
-        ('@re', (r'^(\t)Uint16(\t\*(?:mapoffset|map|map2)\b)', r'\1SatzBe16\2')),
-        ('@re', (r'\b(mapoffset|map2?)(\s*)= &Scl_d_reg\.(\w+(?:\[\d+\])?);', r'\1\2= SATZ_BE16_FIELD(Scl_d_reg, \3);')),
-        ('@re', (r'\*mapoffset\b(?! = 0;)', 'mapoffset->v')),
-        ('@re', (r'\b(map2?)\[i\]', r'\1[i].v')),
-    ],
-    'scl_fu05': [
-        ('\tUint32\t*addr, *addr1;', '\tSatzBe32\t*addr, *addr1;'),
-        ('@re', (r'\b(addr1?) = &Scl_n_reg\.(\w+(?:\[\d+\])?);', r'\1 = SATZ_BE32_FIELD(Scl_n_reg, \2);')),
-        ('@re', (r'^\t\*(addr1?) = ', r'\t\1->v = ')),
-    ],
-    'scl_win1': [
-        ('@re', (r'^(    )Uint16(\t\*sxy,\*exy;)', r'\1SatzBe16\2')),
-        ('@re', (r'\b([se]xy) = &Scl_w_reg\.(\w+)\[0\];', r'\1 = SATZ_BE16_FIELD(Scl_w_reg, \2[0]);')),
-        ('@re', (r'\b([se]xy)\[([01])\] = ', r'\1[\2].v = ')),
-        ('@all:(Uint8 *)&Scl_w_reg.wincontrl[0]', '((Uint8 *)&Scl_w_reg + __builtin_offsetof(SclWinscl, wincontrl))'),
+    'scl_win0': [
+        ('@re', (r'\bcontrl\[([0-7])\]', r'contrl[\1 ^ 1]')),
     ],
     'scl_win2': [
-        ('@re', (r'^(    )Uint16(\t\*sxy,\*exy;)', r'\1SatzBe16\2')),
-        ('@re', (r'\b([se]xy) = &Scl_w_reg\.(\w+)\[0\];', r'\1 = SATZ_BE16_FIELD(Scl_w_reg, \2[0]);')),
-        ('@re', (r'\b([se]xy)\[([01])\] = ', r'\1[\2].v = ')),
-        ('@all:(Uint8 *)&Scl_w_reg.wincontrl[0]', '((Uint8 *)&Scl_w_reg + __builtin_offsetof(SclWinscl, wincontrl))'),
         ('@re', (r'\*addr16 = ([^;]+);', r'satz_bus_write((unsigned long)addr16, \1, 2);')),
-    ],
-    'scl_win3': [
-        ('@all:(Uint8 *)&Scl_w_reg.wincontrl[0]', '((Uint8 *)&Scl_w_reg + __builtin_offsetof(SclWinscl, wincontrl))'),
     ],
     'scl_vblv': [
         ('@all:while(ReqDisplayFlag);', 'while(ReqDisplayFlag) satz_idle();'),
@@ -360,7 +379,7 @@ class Build:
         if sys.platform == 'darwin':
             n.rule('link', f'{CC} {sanitize}-Wl,-dead_strip $in -o $out -Wl,-map,$out.map $libs -lm', description='link $out')
         else:
-            n.rule('link', f'{CC} {sanitize}-fuse-ld=bfd -no-pie -Wl,--gc-sections $in -o $out -Wl,-Map,$out.map $libs -lm',
+            n.rule('link', f'{CC} {sanitize}-fuse-ld=bfd -Wl,--gc-sections $in -o $out -Wl,-Map,$out.map $libs -lm',
                    description='link $out')
 
     def object_path(self, source):
@@ -433,7 +452,7 @@ class Build:
             self.saturn_cc(source, sdk_includes, implicit=sdk_headers)
         work_ram = self.output / 'work_ram.c'
         pieces = ram_pieces(ram_areas, ram_objects)
-        lines = ['#include "satz_host.h"', '']
+        lines = ['#include "satz_host.h"', '', '/* Named pieces are the program\'s own (typed) objects; only their addresses are needed here. */']
         for start, size, name in pieces:
             if name:
                 lines.append(f'extern uint8_t {name}[];')
@@ -460,6 +479,7 @@ class Build:
             self.objects.append(target)
             self.libs += (['-lc++'] if sys.platform == 'darwin' else ['-lstdc++', '-lpthread'])
         if self.sound == 'mednafen':
+            require_real_gcc(M68K_CXX)
             ported = [self.port(MEDNAFEN / 'src/ss' / name, config_dir / name, name) for name in MEDNAFEN_PORTS]
             flags = ['-O2', '-g1', '-DHAVE_CONFIG_H', '-I' + str(config_dir), '-I' + str(MEDNAFEN / 'include'), '-w']
             for source, kind in [(SATZ / 'sound/sound_mednafen.cpp', 'mcxx'), (MEDNAFEN / 'src/hw_cpu/m68k/m68k.cpp', 'm68kcxx'),

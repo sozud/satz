@@ -21,8 +21,8 @@ static void sample(Uint8* out, PerMulInfo* mul)
     Uint32 b = ~satz_pad_buttons() & ~0x3000u & 0xFFFFu;
     out[0] = 0x00;
     out[1] = 0x02;
-    out[2] = (Uint8)((((b >> 4) & 0xF) << 4) | ((b >> 8) & 0xF));
-    out[3] = (Uint8)(((b & 0xF) << 4) | ((b >> 12) & 0xF) | 0x7);
+    *(Uint16*)(out + 2) = (Uint16)((((b >> 4) & 0xF) << 12) | (((b >> 8) & 0xF) << 8) | ((b & 0xF) << 4) |
+                                   ((b >> 12) & 0xF) | 0x7);
     mul[0].id = 0xF0;
     mul[0].con = 1;
     mul[1].id = 0xF0;
@@ -30,6 +30,8 @@ static void sample(Uint8* out, PerMulInfo* mul)
 }
 
 Uint8 per_get_sys_data[12];
+static Uint8 per_time[7] = { 0x19, 0x98, 0x41, 0x01, 0x00, 0x00, 0x00 };
+Uint8* per_get_time_adr = per_time;
 volatile Uint8 per_set_sys_flg;
 #define PER_SYS_DATA per_get_sys_data
 #define PER_SYS_FLAG per_set_sys_flg

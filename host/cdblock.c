@@ -10,8 +10,18 @@
 #define DRIVE_HZ 11289600ull
 #define DRIVE_SECTOR (DRIVE_HZ / 150)
 
+static int cd_instant(void)
+{
+    static int enabled = -1;
+    if (enabled < 0)
+        enabled = getenv("SATZ_CD_INSTANT") != NULL;
+    return enabled;
+}
+
 static uint64_t seek_cycles(int32_t from, int32_t to)
 {
+    if (cd_instant())
+        return 64;
     int64_t delta = (int64_t)to - from;
     uint64_t ticks = 500 + 12 * DRIVE_SECTOR + (uint64_t)(delta < 0 ? -delta : delta) * (delta < 0 ? 28 : 26);
     if (delta < 0 || delta >= 150)
@@ -318,6 +328,8 @@ static void play_sector(void)
 static uint64_t sector_cycles(void)
 {
     Track* t = track_for(cur_fad);
+    if (cd_instant() && !(t && t->audio))
+        return 64;
     return t && t->audio ? AUDIO_SECTOR_CYCLES : DATA_SECTOR_CYCLES;
 }
 

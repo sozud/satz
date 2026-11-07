@@ -28,6 +28,7 @@ extern "C" void satz_sound_init(void)
 
 extern "C" void satz_sound_set_68k(int active)
 {
+ SOUND_Reset68K();
  SOUND_Set68KActive(active != 0);
 }
 

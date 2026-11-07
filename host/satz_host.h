@@ -85,6 +85,7 @@ void satz_bios_init(void);
 void satz_smpc_command(uint8_t command);
 
 void satz_frame_begin(uint64_t frame);
+void satz_mutable_tick(uint64_t frame);
 void satz_frame_rendered(uint64_t frame);
 void satz_window_open(const char* title);
 int satz_window_present(const uint32_t* pixels, int pitch, int width, int height, const int16_t* samples, int frames,

@@ -1,3 +1,5 @@
+#include <stdio.h>
+#include <stdlib.h>
 #include "satz_host.h"
 #include "vdp.h"
 #include "satz_words.h"
@@ -14,6 +16,11 @@ void vdp1_write_reg(uint32_t offset, uint32_t value, int size)
     }
     satz_words_write(vdp1_regs, offset, value, size);
     offset &= ~1u;
+    static int trace = -1;
+    if (trace < 0)
+        trace = getenv("SATZ_TRACE_VDP1") != NULL;
+    if (trace)
+        fprintf(stderr, "vdp1 reg %02X = %04X (line %u)\n", offset, vdp1_regs[offset >> 1], satz_line());
     satz_video_vdp1_write(offset, vdp1_regs[offset >> 1]);
 }
 

@@ -16,6 +16,8 @@ void satz_thread_yield(void);
 
 void satz_dma_copy(unsigned long dst, unsigned long src, unsigned long units, int unit_bytes, int src_step, int dst_step);
 void satz_scu_vector_set(unsigned int vector, void (*handler)(void));
+void satz_bios_set_slave_vector(int vector, void (*entry)(void));
+void satz_bios_execdmp(void) __attribute__((noreturn));
 void (*satz_scu_vector_get(unsigned int vector))(void);
 unsigned int satz_pad_buttons(void);
 
@@ -43,17 +45,6 @@ void* satz_bus_pointer(unsigned long address);
 unsigned long satz_bus_address(const volatile void* pointer);
 void satz_idle(void);
 
-#if defined(__GNUC__) && !defined(__clang__)
-typedef struct __attribute__((scalar_storage_order("big-endian"))) {
-    unsigned short v;
-} SatzBe16;
-typedef struct __attribute__((scalar_storage_order("big-endian"))) {
-    unsigned int v;
-} SatzBe32;
-#define SATZ_BE16_FIELD(object, field) ((SatzBe16*)((unsigned char*)&(object) + __builtin_offsetof(__typeof__(object), field)))
-#define SATZ_BE32_FIELD(object, field) ((SatzBe32*)((unsigned char*)&(object) + __builtin_offsetof(__typeof__(object), field)))
-#endif
-
 #define SATZ_BUS_HANDLE 0x4000000000000000ul
 
 static inline unsigned int satz_field_get(const volatile void* p, unsigned long offset, int size)
@@ -61,10 +52,11 @@ static inline unsigned int satz_field_get(const volatile void* p, unsigned long 
     if (((unsigned long)p & ~0xFFFFFFFFul) == SATZ_BUS_HANDLE)
         return satz_bus_read(satz_bus_address(p) + offset, size);
     const volatile unsigned char* b = (const volatile unsigned char*)p + offset;
-    unsigned int v = 0;
-    for (int i = 0; i < size; ++i)
-        v = v << 8 | b[i];
-    return v;
+    if (size == 1)
+        return *b;
+    if (size == 2)
+        return *(const volatile unsigned short*)b;
+    return *(const volatile unsigned int*)b;
 }
 
 static inline void satz_field_set(volatile void* p, unsigned long offset, int size, unsigned int value)
@@ -74,8 +66,12 @@ static inline void satz_field_set(volatile void* p, unsigned long offset, int si
         return;
     }
     volatile unsigned char* b = (volatile unsigned char*)p + offset;
-    for (int i = size - 1; i >= 0; --i, value >>= 8)
-        b[i] = (unsigned char)value;
+    if (size == 1)
+        *b = (unsigned char)value;
+    else if (size == 2)
+        *(volatile unsigned short*)b = (unsigned short)value;
+    else
+        *(volatile unsigned int*)b = value;
 }
 
 #define SATZ_FIELD_GET(p, type, field) \
@@ -93,5 +89,28 @@ static inline void satz_bus_write32s(unsigned long address, const void* values, 
 {
     for (unsigned long i = 0; i < count; ++i)
         satz_bus_write(address + i * 4, ((const unsigned int*)values)[i], 4);
+}
+
+static inline unsigned long long satz_wide_fields(unsigned long from, unsigned long to)
+{
+    unsigned long long wide = 0;
+    for (unsigned long offset = from; offset < to; offset += 4)
+        wide |= 1ull << (offset / 2);
+    return wide;
+}
+
+static inline void satz_bus_write_struct(unsigned long address, const void* structure, unsigned long size,
+                                         unsigned long long wide)
+{
+    const unsigned char* fields = (const unsigned char*)structure;
+    for (unsigned long offset = 0; offset < size;) {
+        if (wide >> (offset / 2) & 1) {
+            satz_bus_write(address + offset, *(const unsigned int*)(fields + offset), 4);
+            offset += 4;
+        } else {
+            satz_bus_write(address + offset, *(const unsigned short*)(fields + offset), 2);
+            offset += 2;
+        }
+    }
 }
 #endif

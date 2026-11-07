@@ -39,6 +39,8 @@
 //       end of hblank instead of the beginning.
 
 #include "ss.h"
+#include <cstdlib>
+#include <cstdio>
 #include <mednafen/mednafen.h>
 #include <mednafen/FileStream.h>
 #include "scu.h"
@@ -769,6 +771,15 @@ static INLINE void DoDrawing(void)
       RESUME_Polygon, RESUME_Line, RESUME_Line, RESUME_Line,
      };
 
+     {
+      static int trace = -1;
+      if(trace < 0)
+       trace = getenv("SATZ_TRACE_VDP1_CMDS") ? atoi(getenv("SATZ_TRACE_VDP1_CMDS")) : 0;
+      if(trace && (trace > 1 || (CommandData[0] & 0xF) == 4))
+       fprintf(stderr, "vdp1 cmd%X @%05X pmod=%04X col=%04X srca=%04X size=%04X %d,%d %d,%d sysclip=%d,%d\n", CommandData[0] & 0xF, CurCommandAddr * 2, CommandData[2],
+               CommandData[3], CommandData[4], CommandData[5], (int16)CommandData[6], (int16)CommandData[7], (int16)CommandData[10], (int16)CommandData[11],
+               SysClipX, SysClipY);
+     }
      VDP1_EAT_CLOCKS(command_table[CommandData[0] & 0xF](CommandData));
      if(!(CommandData[0] & 0x8))
      {
@@ -890,6 +901,11 @@ static void StartDrawing(void)
  VRAMUsageStart();
 
  CycleCounter = VDP1_UpdateTimingGran;
+}
+
+bool IsDrawing(void)
+{
+ return DrawingActive;
 }
 
 void SetHBVB(const sscpu_timestamp_t event_timestamp, const bool new_hb_status, const bool new_vb_status)

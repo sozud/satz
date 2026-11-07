@@ -4,6 +4,11 @@
 #include "../sound/satz_sound.h"
 #include "../video/satz_video.h"
 #include <stdlib.h>
+
+#define SLAVE_SPIN_DIE 100000000u
+static int slave_instant = -1;
+static uint64_t slave_spins;
+#include <stdlib.h>
 #include <string.h>
 
 #define CYCLES_PER_LINE 1820u
@@ -154,18 +159,33 @@ extern void satz_slave_yield(void);
 void satz_idle(void)
 {
     if (satz_cpu == SATZ_SLAVE) {
+        slave_spins = 0;
         satz_slave_yield();
         return;
     }
     skip_to_next_event();
 }
 
-void satz_poll_reset(void) { spins = 0; }
+void satz_poll_reset(void)
+{
+    spins = 0;
+    slave_spins = 0;
+}
+
 
 void satz_poll(uint32_t address, uint32_t value)
 {
     (void)address;
     (void)value;
+    if (satz_cpu == SATZ_SLAVE) {
+        if (slave_instant < 0)
+            slave_instant = getenv("SATZ_SLAVE_INSTANT") != NULL;
+        if (slave_instant) {
+            if (++slave_spins >= SLAVE_SPIN_DIE)
+                satz_die("slave busy-waits inside a job at %08x (SATZ_SLAVE_INSTANT)", address);
+            return;
+        }
+    }
     if (++spins >= SPIN_LIMIT) {
         spins = 0;
         satz_idle();

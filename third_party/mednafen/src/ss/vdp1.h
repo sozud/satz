@@ -45,6 +45,7 @@ MDFN_FASTCALL void Write8_DB(uint32 A, uint16 DB) MDFN_HOT;
 MDFN_FASTCALL void Write16_DB(uint32 A, uint16 DB) MDFN_HOT;
 MDFN_FASTCALL uint16 Read16_DB(uint32 A) MDFN_HOT;
 
+bool IsDrawing(void);
 void SetHBVB(const sscpu_timestamp_t event_timestamp, const bool new_hb_status, const bool new_vb_status);
 
 bool GetLine(const int line, uint16* buf, unsigned w, uint32 rot_x, uint32 rot_y, uint32 rot_xinc, uint32 rot_yinc);

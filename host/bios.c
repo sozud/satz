@@ -71,7 +71,13 @@ static BupFile* bup_find(const char* name)
 }
 
 static int32_t bup_selpart(uint32_t device, uint16_t number) { (void)number; return device == 0 ? 0 : 1; }
-static int32_t bup_format(uint32_t device) { return device == 0 ? 0 : 1; }
+static int32_t bup_format(uint32_t device)
+{
+    if (device != 0)
+        return 1;
+    memset(bup_files, 0, sizeof(bup_files));
+    return 0;
+}
 static uint32_t blocks_for(uint32_t bytes) { return (bytes + 30 + 59) / 60 + 1; }
 
 static int32_t bup_stat(uint32_t device, uint32_t size, BupStat* stat)
@@ -91,12 +97,12 @@ static int32_t bup_stat(uint32_t device, uint32_t size, BupStat* stat)
     return 0;
 }
 
-static int32_t bup_write(uint32_t device, const BupDir* dir, const uint8_t* data, uint8_t overwrite)
+static int32_t bup_write(uint32_t device, const BupDir* dir, const uint8_t* data, uint8_t keep_existing)
 {
     if (device != 0)
         return 1;
     BupFile* f = bup_find(dir->file_name);
-    if (f && !overwrite)
+    if (f && keep_existing)
         return 6;
     for (int i = 0; i < BUP_FILES && !f; ++i)
         if (!bup_files[i].used)

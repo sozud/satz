@@ -78,6 +78,7 @@ FILE* satz_open_report(const char* name)
 
 void satz_frame_begin(uint64_t frame)
 {
+    satz_mutable_tick(frame);
     if (frames_report)
         fprintf(frames_report, "%llu\t%u\n", (unsigned long long)frame, active_buttons);
     if (frame_limit && frame >= frame_limit) {
