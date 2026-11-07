@@ -5,13 +5,20 @@ import os
 from pathlib import Path
 import re
 import shlex
+import shutil
 import subprocess
 import sys
 
 SATZ = Path(__file__).resolve().parent
 MEDNAFEN = Path(os.environ.get('SATZ_MEDNAFEN', SATZ / 'third_party/mednafen'))
-CC = os.environ.get('SATZ_CC', 'clang-18')
-CXX = os.environ.get('SATZ_CXX', 'clang++-18')
+
+
+def first_tool(*names):
+    return next((name for name in names if shutil.which(name)), names[0])
+
+
+CC = os.environ.get('SATZ_CC') or first_tool('clang-18', 'clang')
+CXX = os.environ.get('SATZ_CXX') or first_tool('clang++-18', 'clang++')
 MEDNAFEN_CXX = os.environ.get('SATZ_MEDNAFEN_CXX', 'g++')
 MEDNAFEN_CC = os.environ.get('SATZ_MEDNAFEN_CC', 'gcc')
 M68K_CXX = os.environ.get('SATZ_M68K_CXX', 'g++-14' if sys.platform == 'darwin' else MEDNAFEN_CXX)
@@ -118,6 +125,7 @@ SBL_PORTS = {
          '#define SPR_SCLREAD_REG(reg) ((Uint16)satz_bus_read(VDP2_REG_BASE+(reg), 2))'),
     ],
     'spr_1c': [
+        ('#ifdef _SH\n#include <machine.h>\n#endif', '#include <machine.h>'),
         ('static Uint16  EraseLeftX  = 0;', 'Uint16  EraseLeftX  = 0;'),
         ('static Uint16  EraseTopY   = 0;', 'Uint16  EraseTopY   = 0;'),
         ('static Uint16  EraseRightX = 0;', 'Uint16  EraseRightX = 0;'),
@@ -126,6 +134,8 @@ SBL_PORTS = {
          '    *VRAM     = (Uint8*)satz_bus_pointer(VRAM_ADDR);\n\n    satz_bus_write(VRAM_ADDR, 0x80, 1);\n    satz_bus_write(VRAM_ADDR + 1, 0x00, 1);'),
     ],
     'spr_2c': [
+        ('#ifdef _SH\n#include <string.h>\t\t/*\t95-7-27\t*/\n#include "sega_dma.h"\n#endif',
+         '#include <string.h>\t\t/*\t95-7-27\t*/\n#include "sega_dma.h"'),
         ('\t\tspCmd->ax = 0;\n\t\tspCmd->ax = 0;\n\t\tspCmd->bx = SpScreenX-1;\n\t\tspCmd->bx = 0;\n'
          '\t\tspCmd->cx = SpScreenX-1;\n\t\tspCmd->cx = SpScreenY-1;\n\t\tspCmd->dx = 0;\n\t\tspCmd->dx = SpScreenY-1;',
          '\t\tspCmd->ax = EraseLeftX;\n\t\tspCmd->ay = EraseTopY;\n\t\tspCmd->bx = EraseRightX;\n\t\tspCmd->by = EraseTopY;\n'
